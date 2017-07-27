@@ -1,0 +1,329 @@
+# Final Project Code, Javad Roostaei 7/27/2017
+# CSC 7300 Bioinformatics I: Biological Databases and Data Analysis
+# Instructor: Diana Diaz
+# Wayne State University, Computer Science Department
+
+################################################################
+setwd("C:/Javad/Wayne Works/Courses/8- Summer 2017/1 Bioinformatic/Course/Project/RCode/try7.22")
+# From https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE75651
+
+#   Differential expression analysis with limma
+library(Biobase)
+library(GEOquery)
+library(limma)
+
+# load series and platform data from GEO
+
+gset <- getGEO("GSE75651", GSEMatrix =TRUE, AnnotGPL=FALSE)
+if (length(gset) > 1) idx <- grep("GPL15414", attr(gset, "names")) else idx <- 1
+gset <- gset[[idx]]
+
+
+# make proper column names to match toptable 
+fvarLabels(gset) <- make.names(fvarLabels(gset))
+
+# group names for all samples
+gsms <- "001111111111"
+sml <- c()
+for (i in 1:nchar(gsms)) { sml[i] <- substr(gsms,i,i) }
+
+# Show the boxplots of the samples before normalization 
+ex <- exprs(gset)
+#View(ex)
+
+# the first set of raw Data Set1
+Rawvar0<-ex[,1:2]
+#View(Rawvar0)
+save(Rawvar0, file='Rawvar0.Rdata') # rAW DATA THAT NEEDS TO GRAPH IN HTML
+boxplot(Rawvar0, main="Distribution of value in Raw data, Control", ylab ="Raw Data", xlab ="Control")
+
+
+# the second set of raw Data for control
+Rawvar1<-ex[,3:12]
+#View(Rawvar1)
+save(Rawvar1, file='Rawvar1.Rdata') # rAW DATA THAT NEEDS TO GRAPH IN HTML
+boxplot(Rawvar1, main="Distribution of value in Raw data, Experiments", ylab ="Raw Data", xlab ="Experiments")
+
+
+# log2 transform
+ex <- exprs(gset)
+qx <- as.numeric(quantile(ex, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+LogC <- (qx[5] > 100) ||
+  (qx[6]-qx[1] > 50 && qx[2] > 0) ||
+  (qx[2] > 0 && qx[2] < 1 && qx[4] > 1 && qx[4] < 2)
+if (LogC) { ex[which(ex <= 0)] <- NaN
+exprs(gset) <- log2(ex) }
+#View (exprs(gset))
+log2ex=log2(ex)
+#View (log2ex)
+
+
+########################################################
+######### Boxplot for selected GEO samples #############
+########################################################
+
+# order samples by group
+ex <- exprs(gset)[ , order(sml)]
+sml <- sml[order(sml)]
+fl <- as.factor(sml)
+labels <- c("Control","Experiment")
+
+# set parameters and draw the plot
+palette(c("#f4dfdf","#dfeaf4", "#AABBCC"))
+dev.new(width=4+dim(gset)[[2]]/5, height=6)
+par(mar=c(2+round(max(nchar(sampleNames(gset)))/2),4,2,1))
+title <- paste ("GSE75651", '/', annotation(gset), " selected samples", sep ='')
+boxplot(ex, ylab ="Raw Data", xlab ="Control + Experiments", boxwex=0.6, notch=T, main=title, outline=FALSE, las=0.5, col=fl)
+legend("topleft", labels, fill=palette(), bty="n")
+
+boxplot(log2ex, ylab ="log2 transform", xlab ="Control + Experiments", boxwex=0.6, notch=T, main=title, outline=FALSE, las=0.5, col=fl)
+legend("topleft", labels, fill=palette(), bty="n")
+
+########################################################
+########### Volcano Plot  with All data  ###############
+########################################################
+
+# set up the data and proceed with analysis
+sml <- paste("G", sml, sep="")    # set group names
+fl <- as.factor(sml)
+gset$description <- fl
+design <- model.matrix(~ description + 0, gset)
+colnames(design) <- levels(fl)
+fit <- lmFit(gset, design)
+cont.matrix <- makeContrasts(G1-G0, levels=design)
+fit2 <- contrasts.fit(fit, cont.matrix)
+fit2 <- eBayes(fit2, 0.01)
+tT <- topTable(fit2, adjust="fdr", sort.by="B", number="all")
+
+tT <- subset(tT, select=c("ID","adj.P.Val","P.Value","t","B","logFC","GB_ACC","SPOT_ID"))
+#write.table(tT, file=stdout(), row.names=F, sep="\t")
+#View (tT)
+
+# Make a basic volcano plot
+with(tT, plot(logFC, -log10(adj.P.Val), pch=20, main="Volcano plot", xlim=c(-2.5,2)))
+
+# Add colored points: red if padj<0.05, orange of log2FC>1, green if both)
+with(subset(tT, -log10(adj.P.Val)< 2 ), points(logFC, -log10(adj.P.Val), pch=20, col="gray"))
+with(subset(tT, -log10(adj.P.Val)> 2 & logFC>1), points(logFC, -log10(adj.P.Val), pch=20, col="red"))
+with(subset(tT, -log10(adj.P.Val)> 2 & logFC<(-1)), points(logFC, -log10(adj.P.Val), pch=20, col="green"))
+
+# some references https://stat.ethz.ch/pipermail/r-help/2011-July/282797.html
+
+abline(v=1, col="purple")
+abline(v=-1, col="purple")
+abline(h=2, col="purple")
+
+# Count N / Section With help of Prateek
+grey.count = nrow(subset(tT, -log10(adj.P.Val)< 2 & (logFC)<1 & (logFC)>(-1)))
+grey.count = paste(c("N =", grey.count), collapse = " ")
+
+grey.countL = nrow(subset(tT, -log10(adj.P.Val)< 2 & (logFC)<(-1)))
+grey.countL = paste(c("N =", grey.countL), collapse = " ")
+
+grey.countR = nrow(subset(tT, -log10(adj.P.Val)< 2 & (logFC)>1))
+grey.countR = paste(c("N =", grey.countR), collapse = " ")
+
+red.count = nrow(subset(tT, -log10(adj.P.Val)> 2 & logFC>1))
+red.count = paste(c("N =", red.count), collapse = " ")
+
+green.count = nrow(subset(tT, -log10(adj.P.Val)> 2 & logFC<(-1)))
+green.count = paste(c("N =", green.count), collapse = " ")
+
+black.count = nrow(subset(tT, -log10(adj.P.Val)> 2 & abs(logFC)<1))
+black.count = paste(c("N =", black.count), collapse = " ")
+
+# add legend
+legend(x = "topleft", legend = green.count, bty = "n", text.col = "red")
+legend(x = "top", legend = black.count, bty = "n", text.col = "red")
+legend(x = "topright", legend = red.count, bty = "n", text.col = "red")
+legend(x = "bottomleft", legend = grey.countL, bty = "n", text.col = "red")
+legend(x = "bottomright", legend = grey.countR, bty = "n", text.col = "red")
+legend(x = "bottom", legend = grey.count, bty = "n", text.col = "red")
+
+########################################################
+########### Volcano Plot  with top data  ###############
+########################################################
+
+# set up the data and proceed with analysis
+tT <- topTable(fit2, adjust="fdr", sort.by="B", number=250)
+
+tT <- subset(tT, select=c("ID","adj.P.Val","P.Value","t","B","logFC","GB_ACC","SPOT_ID"))
+#write.table(tT, file=stdout(), row.names=F, sep="\t")
+#View (tT)
+
+# Make a basic volcano plot
+with(tT, plot(logFC, -log10(adj.P.Val), pch=20, main="Volcano plot", xlim=c(-2.5,2)))
+
+# Add colored points: red if padj<0.05, orange of log2FC>1, green if both)
+with(subset(tT, -log10(adj.P.Val)< 7 ), points(logFC, -log10(adj.P.Val), pch=20, col="gray"))
+with(subset(tT, -log10(adj.P.Val)> 7 & logFC>1), points(logFC, -log10(adj.P.Val), pch=20, col="red"))
+with(subset(tT, -log10(adj.P.Val)> 7 & logFC<(-1)), points(logFC, -log10(adj.P.Val), pch=20, col="green"))
+
+# some references https://stat.ethz.ch/pipermail/r-help/2011-July/282797.html
+
+abline(v=1, col="purple")
+abline(v=-1, col="purple")
+abline(h=7, col="purple")
+
+# Count N / Section
+grey.count = nrow(subset(tT, -log10(adj.P.Val)< 7 & (logFC)<1 & (logFC)>(-1)))
+grey.count = paste(c("N =", grey.count), collapse = " ")
+
+grey.countL = nrow(subset(tT, -log10(adj.P.Val)< 7 & (logFC)<(-1)))
+grey.countL = paste(c("N =", grey.countL), collapse = " ")
+
+grey.countR = nrow(subset(tT, -log10(adj.P.Val)< 7 & (logFC)>1))
+grey.countR = paste(c("N =", grey.countR), collapse = " ")
+
+red.count = nrow(subset(tT, -log10(adj.P.Val)> 7 & logFC>1))
+red.count = paste(c("N =", red.count), collapse = " ")
+
+green.count = nrow(subset(tT, -log10(adj.P.Val)> 7 & logFC<(-1)))
+green.count = paste(c("N =", green.count), collapse = " ")
+
+black.count = nrow(subset(tT, -log10(adj.P.Val)> 7 & abs(logFC)<1))
+black.count = paste(c("N =", black.count), collapse = " ")
+
+
+# add legend
+legend(x = "topleft", legend = green.count, bty = "n", text.col = "red")
+legend(x = "top", legend = black.count, bty = "n", text.col = "red")
+legend(x = "topright", legend = red.count, bty = "n", text.col = "red")
+legend(x = "bottomleft", legend = grey.countL, bty = "n", text.col = "red")
+legend(x = "bottomright", legend = grey.countR, bty = "n", text.col = "red")
+legend(x = "bottom", legend = grey.count, bty = "n", text.col = "red")
+
+
+########################################################
+################## Scatter Plots #######################
+########################################################
+
+par(mfrow = c(1, 2))
+# replicates for ES
+w <- c(1:2) # between control 1 and Control 2
+#View(log2ex)
+plot(log2ex[, w], pch = 20, cex = 0.5, main = sprintf("r = %.3f", cor(log2ex [,w[1]], log2ex[, w[2]])))
+
+w <- c(1, 3) # between control 1 and Experiment 3
+plot(log2ex[, w], pch = 20, cex = 0.5, main = sprintf("r = %.3f", cor(log2ex [,w[1]], log2ex[, w[2]])))
+
+w <- c(1, 4) # between control 1 and Experiment 4
+plot(log2ex[, w], pch = 20, cex = 0.5, main = sprintf("r = %.3f", cor(log2ex [,w[1]], log2ex[, w[2]])))
+
+w <- c(5, 6) # between Experiment 5 and Experiment 6
+plot(log2ex[, w], pch = 20, cex = 0.5, main = sprintf("r = %.3f", cor(log2ex [,w[1]], log2ex[, w[2]])))
+
+########################################################
+############# Hierarchical clustering ##################
+########################################################
+
+# Based on http://genomicsclass.github.io/book/pages/clustering_and_heatmaps.html
+var1=exprs(gset)
+d <- dist( t(var1) )
+
+#install.packages("rafalib")
+library(rafalib)
+mypar()
+hc <- hclust(d)
+hc
+plot(hc,labels=colnames(var1),cex=0.5)
+
+myplclust(hc, labels=colnames(var1), lab.col=as.fumeric(colnames(var1)), cex=0.5)
+myplclust(hc, labels=colnames(var1), lab.col=as.fumeric(colnames(var1)),cex=0.5)
+
+abline(h=120) # this is a line that shows the cut between major groups
+hclusters <- cutree(hc, h=120)
+table(true=colnames(var1), cluster=hclusters)
+
+hclusters <- cutree(hc, k=3)
+table(true=colnames(var1), cluster=hclusters)
+
+# K-means
+set.seed(1)
+km <- kmeans(t(var1), centers=4)
+names(km)
+
+
+plot(var1, col=as.fumeric(colnames(var1)), pch=16)
+plot(var1, col=km$cluster, pch=16)
+
+table(true=colnames(var1),cluster=km$cluster)
+
+km <- kmeans(t(var1), centers=4)
+mds <- cmdscale(d)
+
+mypar(1,2)
+plot(mds[,1], mds[,2]) 
+plot(mds[,1], mds[,2], col=km$cluster, pch=16)
+
+table(true=colnames(var1),cluster=km$cluster)
+
+
+library(RColorBrewer) 
+hmcol <- colorRampPalette(brewer.pal(9, "GnBu"))(100)
+
+library(genefilter)
+
+rv <- rowVars(var1)
+idx <- order(-rv)[1:40]
+
+#install.packages("gplots")
+library(gplots) ##Available from CRAN
+cols <- palette(brewer.pal(8, "Dark2"))[as.fumeric(colnames(var1))]
+head(cbind(colnames(var1),cols))
+
+########################################################
+############# Heat Map Between Samples #################
+########################################################
+
+library(RColorBrewer)  # with color palettes
+heatmap(cor(log2ex), col = rev(brewer.pal(11, "RdBu")), scale = "none",
+        margins = c(8, 8))
+library(ComplexHeatmap)
+topAn <- HeatmapAnnotation(df = cor(log2ex))
+Heatmap(cor(log2ex), col = rev(brewer.pal(11, "RdBu")), name = "Correlation")
+
+
+# Heat map between samples and top IDs 
+heatmap.2(var1[idx,], labCol=colnames(var1),
+          trace="none", 
+          ColSideColors=cols, 
+          col=hmcol,margins = c(8, 8))
+
+
+########################################################
+#######  PCA, 3D Visualization, and Clustering  ########
+########################################################
+
+# from http://planspace.org/2013/02/03/pca-3d-visualization-and-clustering-in-r/
+
+head(var1)
+round(cor(var1[,1:12]), 2)
+pc <- princomp(var1, cor=TRUE, scores=TRUE)
+summary(pc)
+plot(pc,type="lines")
+
+#install.packages("rgl") 
+library(rgl)
+var1T=as.data.frame(t(var1)) # change to data frame
+# add a column of information at the end of the new table indicaating the time
+var1T$time<-c("0 hr","0 hr","4 hr","4 hr","8 hr","8 hr","12 hr","12 hr","18 hr","18 hr","24 hr","24 hr")
+#View(var1T[,c(15414,15415)])
+plot3d(pc$scores[,1:3], col=as.numeric(factor(var1T$time)))
+biplot(pc)
+
+text3d(pc$scores[,1:3],texts=rownames(var1))
+text3d(pc$loadings[,1:3], texts=rownames(pc$loadings), col="red")
+coords <- NULL
+for (i in 1:nrow(pc$loadings)) {
+  coords <- rbind(coords, rbind(c(0,0,0),pc$loadings[i,1:3]))
+}
+lines3d(coords, col="red", lwd=4)
+
+set.seed(42)
+cl <- kmeans(var1[,1:4],3)
+var1$cluster <- as.factor(cl$cluster)
+
+plot3d(pc$scores[,1:3], col=as.numeric(factor(var1T$time)), main="k-means clusters")
+
+# End
